@@ -1,47 +1,59 @@
-#!name=多邻国 Duolingo Super v6
-#!desc=纯 Loon 原生重写，不需要 JS：把用户资料里的订阅字段和「无限能量」开关 health.unlimitedHeartsAvailable 一起改掉（v4 少了后者，所以电池一直停在 20）。先停用旧版多邻国插件；需开启重写与 MITM。
+#!name=多邻国 Duolingo Super v7
+#!desc=纯 Loon 原生重写，不需要 JS。两条线：① available-features 的权益列表（客户端判断无限红心/能量的地方，响应只有 200 字节）；② 用户资料用「响应体正则替换」改写订阅字段与无限开关 —— 不解析 JSON，10.5 MB 也不怕。先停用旧版多邻国插件；需开启重写与 MITM。
 #!author=qinxi 原订阅逻辑；Loon 适配
 #!homepage=https://github.com/qinxi/script/blob/master/quantumult-x/rewrite/duolingo_app_rewrite.conf
 #!loon_version=3.2.1(730)
 #!tag=Duolingo
 
 [Rewrite]
-# 匹配「完整的用户资料」请求：/日期/users/数字ID?fields=…（该 fields 列表里含 health）。
-# 为什么要带上 ?…health：同一路径还有只取局部字段的小请求，例如
-#   /2023-05-23/users/<ID>?fields=streakData{…}          （不含 health，响应里没有订阅/健康字段）
-# 只有完整资料那份响应里才有 health / subscriberLevel / subscriptionConfigs / shopItems；
-# 只取局部字段的那份不加约束地改会莫名其妙多出 hasPlus、shopItems 之类的键。
+# 依据（224/226 两次真实抓包 + 本版 App 自己的接口响应）：
 #
-# 为什么不是 /batch：batch 里的用户对象嵌在 responses[].body 字符串里，Key Path 动作够不到，
-# 而且往 batch 顶层加键会破坏它的结构。本版 App（7.144.0）的用户资料是直连的，见 226 抓包。
+# 1) GET /日期/users/<ID>/available-features
+#    响应：{"subscriptionFeatures":["EXPLAIN_MY_ANSWER_FOR_ENERGY_COST"],"purchasableFeatures":[…]}
+#    免费账号这份里只有 EXPLAIN_MY_ANSWER_FOR_ENERGY_COST。客户端内部是 SubscriptionFeatures 集合，
+#    补丁/社区脚本都是往这里灌注权益名（ReVanced 的 Duolingo 补丁直接在客户端构造同一个集合：
+#    UNLIMITED_HEARTS、NO_NETWORK_ADS、LEGENDARY_LEVEL、MISTAKES_INBOX、MASTERY_QUIZ、NO_SUPER_PROMOS…）。
+#    下面这串**不是编的**：前 11 个就是本版 App 自己在 subscription-catalog 里给 Premium（Super）列出的
+#    advertisableFeatures 原文（226 抓包 /users/<ID>/subscription-catalog 可见），
+#    最后一个 EXPLAIN_MY_ANSWER_FOR_ENERGY_COST 是免费账号原本就有的，保留成并集。
+#    响应只有 200 字节，这条用 Key Path 改，最稳。
 #
-# Key Path 动作是 Loon 原生的「复写 JSON 配置」语法：
-#   response-body-json-replace <key path> <value> [<key path> <value> …]  key 必须已存在
-#   response-body-json-add     <key path> <value> [<key path> <value> …]  key 不存在则新增，存在则覆盖
-# 参数按空格分隔，所以 JSON 字面量一律写成紧凑形式（不带空格）。
-# 按重要程度排：第一条就是电池 ♾️ 的开关，后面的都属于「订阅状态」外观。
-
-# 1) 无限能量（电池 ♾️）+ 订阅等级 + 追踪标记 + 清空广告位
-^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/[0-9]{4}-[0-9]{2}-[0-9]{2}/users/[0-9]+\?.*health response-body-json-replace health.unlimitedHeartsAvailable true subscriberLevel GOLD trackingProperties.has_item_gold_subscription true adsConfig.units {}
-
-# 2) 订阅配置：到期时间写死 2100-01-01（无脚本算不出「当前时间 + 400 天」，写死更耐久）
-^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/[0-9]{4}-[0-9]{2}-[0-9]{2}/users/[0-9]+\?.*health response-body-json-replace subscriptionConfigs [{"vendorPurchaseId":"loon_mock_purchase","isInBillingRetryPeriod":false,"isInGracePeriod":false,"pauseStart":null,"pauseEnd":null,"productId":"com.duolingo.DuolingoMobile.subscription.Gold.TwelveMonth.25Q3IncMS87D.Trial7.240","receiptSource":1,"expirationTimestamp":4102444800000,"isFreeTrialPeriod":false,"itemType":"gold_subscription"}]
-
-# 3) hasPlus：免费用户资料里没有这个键，用 add
-^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/[0-9]{4}-[0-9]{2}-[0-9]{2}/users/[0-9]+\?.*health response-body-json-add hasPlus true
-
-# 4) shopItems：免费用户是空数组，补一个 gold_subscription
-^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/[0-9]{4}-[0-9]{2}-[0-9]{2}/users/[0-9]+\?.*health response-body-json-add shopItems[0] {"purchaseId":"loon_mock_gold","purchaseDate":1792171699,"purchasePrice":0,"id":"gold_subscription","itemName":"gold_subscription","subscriptionInfo":{"currency":"USD","expectedExpiration":4102444800,"isFreeTrialPeriod":false,"isIntroOfferPeriod":false,"isInBillingRetryPeriod":false,"periodLength":12,"price":0,"productId":"com.duolingo.DuolingoMobile.subscription.Gold.TwelveMonth.25Q3IncMS87D.Trial7.240","renewer":"APPLE","renewing":false,"tier":"twelve_month","type":"gold","vendorPurchaseId":"loon_mock_vendor","promotionalOfferId":"","firstPaymentDate":0},"familyPlanInfo":{"ownerId":0,"secondaryMembers":[],"inviteTokens":[],"pendingInvites":[],"pendingInviteSuggestions":[]}}
-
-# ---------------------------------------------------------------------------
-# 可选（一般不用）：需要处理 /batch（用户对象嵌在 responses[].body 字符串里）时才用脚本版。
-# 脚本必须按 Loon 的方式用远程地址引用，本地文件名不会加载 —— 那正是 Loon 里显示空白的原因（对照 kaojiang.Inplugin）：
+# 2) GET /日期/users/<ID>?fields=…health…（完整用户资料，10.5 MB）
+#    这条**不用** response-body-json-*：JSON 动作要求响应是合法 JSON，Loon 得把 10.5 MB 解析再序列化，
+#    这正是前面几个版本在这台设备上没落地的可疑点。改用 response-body-replace-regex（Loon 3.2.1(730) 起
+#    就有的动作，按正则直接替换响应体文本），只做定点字符串替换，不解析、不重排，代价极低。
+#    所有正则都与抓包里的实际文本对过（224 抓包那份 10.4 MB 响应是紧凑 JSON，冒号后没有空格；
+#    这里仍写成 \s* 容忍两种排版）。替换值一律写成不含空格的紧凑 JSON —— 旧语法按空格切参数。
 #
-# 脚本版已经单独做成 多邻国-脚本版.plugin（script-path 指向下面这个已发布的 raw 地址），要 /batch 时直接导入那个：
+# 语法（Loon 旧版复写文档）：
+#   response-body-replace-regex <正则1> <替换值1> [<正则2> <替换值2> …]
+#   response-body-json-replace <key path> <值> [<key path> <值> …]   key 必须已存在
+# 正则或替换值里要写空格时用 \x20，否则配置按空格切分会出错。
+
+# ---- A. 权益列表：电池 ♾️ / 无限红心的开关 ----
+^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/(?:[0-9]{4}-[0-9]{2}-[0-9]{2}/)?users/[0-9]+/available-features(?:\?|$) response-body-json-replace subscriptionFeatures ["EXPLAIN_MY_ANSWER_FOR_ENERGY_COST","NO_NETWORK_ADS","UNLIMITED_HEARTS","LEGENDARY_LEVEL","MISTAKES_INBOX","MASTERY_QUIZ","NO_SUPER_PROMOS","LICENSED_SONGS","CHAT_TUTORS","EXPLAIN_MY_ANSWER","VIDEO_CALL_IN_PATH","VIDEO_CALL_IN_PRACTICE_HUB"]
+
+# ---- B. 用户资料（10.5 MB，纯正则替换） ----
+# ① unlimitedHeartsAvailable false → true：无限红心/无限能量标志位（ReVanced 的「Unlimited hearts」补丁
+#    就是把这个参数置 1，是客户端真正读的那个开关）。
+# ② subscriberLevel "FREE" → "PREMIUM"（Super；GOLD 在客户端枚举里是 Max），并在同一处补上
+#    hasPlus=true（免费资料里没有 hasPlus 这个键，正则替换正好可以顺手插入）。
+#    负向先行 (?!PREMIUM) 保证已经是 PREMIUM 时不再重复插入（两个插件都开着也不会写出重复键）。
+# ③ subscriptionConfigs [] → 一条 premium 订阅。itemType 用 premium_subscription —— 本版 App 商店里
+#    卖的 tier 就是 PREMIUM_SUBSCRIPTION / LITE_SUBSCRIPTION（见 subscription-catalog），
+#    productId 也照抄抓包里的真实商品号，不再用 qinxi 那个 gold_subscription 旧值。
+# ④ shopItems [] → 对应的商店条目，状态看起来才是「已订阅」。
+# ⑤ trackingProperties 两个标记位（免费资料里都是 false）。
+^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/[0-9]{4}-[0-9]{2}-[0-9]{2}/users/[0-9]+\?.*health response-body-replace-regex "unlimitedHeartsAvailable"\s*:\s*false "unlimitedHeartsAvailable":true "subscriberLevel"\s*:\s*"(?!PREMIUM)[A-Z_]+" "subscriberLevel":"PREMIUM","hasPlus":true "subscriptionConfigs"\s*:\s*\[\s*\] "subscriptionConfigs":[{"vendorPurchaseId":"loon_mock_purchase","isInBillingRetryPeriod":false,"isInGracePeriod":false,"pauseStart":null,"pauseEnd":null,"productId":"com.duolingo.DuolingoMobile.subscription.Premium.OneMonth.26Q3FP230D.17","receiptSource":1,"expirationTimestamp":4102444800000,"isFreeTrialPeriod":false,"itemType":"premium_subscription"}] "shopItems"\s*:\s*\[\s*\] "shopItems":[{"purchaseId":"loon_mock_premium","purchaseDate":1792171699,"purchasePrice":0,"id":"premium_subscription","itemName":"premium_subscription","subscriptionInfo":{"currency":"USD","expectedExpiration":4102444800,"isFreeTrialPeriod":false,"isIntroOfferPeriod":false,"isInBillingRetryPeriod":false,"periodLength":1,"price":0,"productId":"com.duolingo.DuolingoMobile.subscription.Premium.OneMonth.26Q3FP230D.17","renewer":"APPLE","renewing":false,"tier":"one_month","type":"premium","vendorPurchaseId":"loon_mock_vendor","promotionalOfferId":"","firstPaymentDate":0},"familyPlanInfo":{"ownerId":0,"secondaryMembers":[],"inviteTokens":[],"pendingInvites":[],"pendingInviteSuggestions":[]}}] "has_item_gold_subscription"\s*:\s*false "has_item_gold_subscription":true "has_item_premium_subscription"\s*:\s*false "has_item_premium_subscription":true
+
+# 不改 /batch：226 抓包里的 batch 响应只有 eventBlocklist / apiHost / clientExperiments / featureFlags，
+# 里面没有用户资料，也没有 health / energyConfig，改它没有意义（而且用户对象嵌在 responses[].body 字符串里，
+# Key Path 也够不到）。广告位（adsConfig.units）和商店文案不属于这次的目标，故意不动。
+
+# 备选：如果你的 Loon 更旧或想让脚本处理 /batch，用脚本版插件：
+#   多邻国-脚本版.plugin（script-path 指向下面的 raw 地址）
 # https://raw.githubusercontent.com/shilianmalaxiangguo/loon-plugins/main/duolingo_super.js
-#
-# 换成脚本版时：上面的 [Rewrite] 四行要注释掉（避免同一份响应被改两遍），只保留 [Script] 段那条规则。
-# ---------------------------------------------------------------------------
+# 两个插件只启用一个，别同时开。
 
 [MITM]
 hostname = *.duolingo.com, *.duolingo.cn
