@@ -37,9 +37,10 @@
 # 可选（一般不用）：需要处理 /batch（用户对象嵌在 responses[].body 字符串里）时才用脚本版。
 # 脚本必须按 Loon 的方式用远程地址引用，本地文件名不会加载 —— 那正是 Loon 里显示空白的原因（对照 kaojiang.Inplugin）：
 #
-# http-request ^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/[0-9]{4}-[0-9]{2}-[0-9]{2}/(?:batch|users/[0-9]+)/?(?:\?|$)(?!.*__loon_internal=1) script-path=https://你的域名/duolingo_super.js,requires-body=true,binary-body-mode=false,timeout=60,tag=Duolingo Super
+# 脚本版已经单独做成 多邻国-脚本版.plugin（script-path 指向下面这个已发布的 raw 地址），要 /batch 时直接导入那个：
+# https://raw.githubusercontent.com/shilianmalaxiangguo/loon-plugins/main/duolingo_super.js
 #
-# 换成脚本版时：上面的 [Rewrite] 四行要注释掉（避免同一份响应被改两遍），并单独开一个 [Script] 段放这行。
+# 换成脚本版时：上面的 [Rewrite] 四行要注释掉（避免同一份响应被改两遍），只保留 [Script] 段那条规则。
 # ---------------------------------------------------------------------------
 
 [MITM]
