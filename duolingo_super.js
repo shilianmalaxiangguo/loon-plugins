@@ -1,21 +1,44 @@
 /**
- * 多邻国 Duolingo Super —— Loon 脚本（v5）
+ * 多邻国 Duolingo Super —— Loon 脚本（v7）
  *
  * 逻辑来源：qinxi duolingo_app_sub.js v1.5.0（QX script-analyze-echo-response）。
- * 运行方式：Loon [Script] http-request。脚本自己把请求重发一遍，改完用户资料后
+ * 运行方式：Loon [Script] http-request。脚本自己把请求重发一遍，改完响应后
  * 用 $done({response}) 直接把响应交回客户端，因此不依赖 Loon 的响应体复写缓冲。
  *
  * 与 QX 原脚本的区别 / 依据：
- * 1. 同时处理 /日期/users/数字ID 直连资料与 /日期/batch（新版 App 不再把用户资料放进 batch）。
- * 2. 除订阅字段外，额外按官方用户资料字段 health.unlimitedHeartsAvailable 打开无限能量，
- *    该字段来自仍在维护的用户脚本（Duolingo Unlimited Hearts / Duolingo Super，
- *    WORKS AS OF 2025-11-22），QX 原脚本没有这一条。
- * 3. 任何一步失败都调用 $done({})，让 Loon 按原请求继续，不会把请求卡死。
+ * 1. 先改 available-features 的权益列表（subscriptionFeatures）。免费账号那份里只有
+ *    EXPLAIN_MY_ANSWER_FOR_ENERGY_COST，而客户端是拿这份字符串数组去比对自己内部的
+ *    SubscriptionFeatures 集合的；无限红心/无限能量对应的权益名就是 UNLIMITED_HEARTS。
+ *    下面 DL_FEATURES 里的名字不是编的：除最后一项外，全部照抄本版 App 自己在
+ *    /users/<ID>/subscription-catalog 里给 Premium 列出的 advertisableFeatures。
+ * 2. 用户资料：订阅等级用 PREMIUM（客户端枚举里 Super=PREMIUM、Max=GOLD），
+ *    subscriptionConfigs 的 itemType 用 premium_subscription（抓包商店里卖的 tier 是
+ *    PREMIUM_SUBSCRIPTION / LITE_SUBSCRIPTION），productId 照抄抓包里的真实商品号。
+ * 3. 打开 health.unlimitedHeartsAvailable（ReVanced「Unlimited hearts」补丁改的就是这个参数）。
+ * 4. 同时处理 /日期/users/数字ID 直连资料与 /日期/batch（新版 App 的用户资料是直连的，
+ *    batch 里只剩 eventBlocklist / featureFlags 之类，改它没有副作用也没有意义）。
+ * 5. 任何一步失败都调用 $done({})，让 Loon 按原请求继续，不会把请求卡死。
  */
 
 var DL_TAG = '[Duolingo Super]';
 var DL_INTERNAL = '__loon_internal=1';
-var DL_PRODUCT = 'com.duolingo.DuolingoMobile.subscription.Gold.TwelveMonth.25Q3IncMS87D.Trial7.240';
+var DL_PRODUCT = 'com.duolingo.DuolingoMobile.subscription.Premium.OneMonth.26Q3FP230D.17';
+var DL_ITEM_TYPE = 'premium_subscription';
+// 权益名：前 11 个来自 subscription-catalog 的 Premium advertisableFeatures，最后一个是免费账号原有项。
+var DL_FEATURES = [
+    'EXPLAIN_MY_ANSWER_FOR_ENERGY_COST',
+    'NO_NETWORK_ADS',
+    'UNLIMITED_HEARTS',
+    'LEGENDARY_LEVEL',
+    'MISTAKES_INBOX',
+    'MASTERY_QUIZ',
+    'NO_SUPER_PROMOS',
+    'LICENSED_SONGS',
+    'CHAT_TUTORS',
+    'EXPLAIN_MY_ANSWER',
+    'VIDEO_CALL_IN_PATH',
+    'VIDEO_CALL_IN_PRACTICE_HUB'
+];
 var DL_SUBSCRIPTION_DAYS = 400;
 var DL_EXPIRATION_MS = DL_SUBSCRIPTION_DAYS * 24 * 60 * 60 * 1000;
 var DL_FETCH_TIMEOUT_MS = 45000;
@@ -46,30 +69,30 @@ function dlSubscriptionConfig(now) {
         receiptSource: 1,
         expirationTimestamp: now + DL_EXPIRATION_MS,
         isFreeTrialPeriod: false,
-        itemType: 'gold_subscription'
+        itemType: DL_ITEM_TYPE
     };
 }
 
-function dlGoldShopItem(now, ownerId) {
+function dlPremiumShopItem(now, ownerId) {
     return {
-        purchaseId: 'mock_gold_' + now,
+        purchaseId: 'mock_premium_' + now,
         purchaseDate: Math.floor(now / 1000),
         purchasePrice: 0,
-        id: 'gold_subscription',
-        itemName: 'gold_subscription',
+        id: DL_ITEM_TYPE,
+        itemName: DL_ITEM_TYPE,
         subscriptionInfo: {
             currency: 'USD',
             expectedExpiration: Math.floor((now + DL_EXPIRATION_MS) / 1000),
             isFreeTrialPeriod: false,
             isIntroOfferPeriod: false,
             isInBillingRetryPeriod: false,
-            periodLength: 12,
+            periodLength: 1,
             price: 0,
             productId: DL_PRODUCT,
             renewer: 'APPLE',
             renewing: false,
-            tier: 'twelve_month',
-            type: 'gold',
+            tier: 'one_month',
+            type: 'premium',
             vendorPurchaseId: 'mock_vendor_' + now,
             promotionalOfferId: '',
             firstPaymentDate: 0
@@ -84,15 +107,22 @@ function dlGoldShopItem(now, ownerId) {
     };
 }
 
-function dlHasGoldShopItem(shopItems) {
+function dlHasSubscriptionShopItem(shopItems) {
     return shopItems.some(function (item) {
-        return dlIsObject(item) && (item.id === 'gold_subscription' || item.itemName === 'gold_subscription');
+        return dlIsObject(item) && (item.id === DL_ITEM_TYPE || item.itemName === DL_ITEM_TYPE);
     });
+}
+
+/** available-features：把客户端用来判断「无限红心/无限能量」的权益列表替换成完整集。 */
+function dlPatchFeatures(payload) {
+    if (!Array.isArray(payload.subscriptionFeatures)) return false;
+    payload.subscriptionFeatures = DL_FEATURES.slice();
+    return true;
 }
 
 /** 就地改写一个用户资料对象。字段与 QX 原脚本一致，另外打开无限能量。 */
 function dlPatchUser(user, now) {
-    user.subscriberLevel = 'GOLD';
+    user.subscriberLevel = 'PREMIUM';
     user.hasPlus = true;
     user.subscriptionConfigs = [dlSubscriptionConfig(now)];
 
@@ -103,9 +133,7 @@ function dlPatchUser(user, now) {
 
     if (dlIsObject(user.trackingProperties)) {
         user.trackingProperties.has_item_gold_subscription = true;
-        if (user.trackingProperties.monetizable_status === 'free_trial_eligible') {
-            user.trackingProperties.monetizable_status = 'free_trial_owner_super';
-        }
+        user.trackingProperties.has_item_premium_subscription = true;
     }
 
     // 无限能量：只在服务端本来就返回 health 时补标志位，避免清空客户端已有的其它 health 字段。
@@ -113,8 +141,8 @@ function dlPatchUser(user, now) {
         user.health.unlimitedHeartsAvailable = true;
     }
 
-    if (Array.isArray(user.shopItems) && !dlHasGoldShopItem(user.shopItems)) {
-        user.shopItems.push(dlGoldShopItem(now, user.id));
+    if (Array.isArray(user.shopItems) && !dlHasSubscriptionShopItem(user.shopItems)) {
+        user.shopItems.push(dlPremiumShopItem(now, user.id));
     }
 }
 
@@ -134,6 +162,12 @@ function dlPatchBody(rawBody) {
 
     var now = Date.now();
     var touched = false;
+
+    // available-features：只有权益列表，没有用户对象，单独处理。
+    if (dlIsObject(payload) && dlPatchFeatures(payload)) {
+        dlLog('subscriptionFeatures replaced with ' + DL_FEATURES.length + ' entries');
+        return JSON.stringify(payload);
+    }
 
     if (dlIsObject(payload) && Array.isArray(payload.responses)) {
         payload.responses.forEach(function (entry) {
