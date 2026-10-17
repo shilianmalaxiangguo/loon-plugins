@@ -1,0 +1,14 @@
+#!name=多邻国 Duolingo v8 响应脚本
+#!desc=直接改写原请求的响应，不重发请求。脚本固定到 v8 提交，避免沿用旧脚本地址缓存。须停用所有旧版多邻国插件，开启脚本、重写和 MITM。客户端字段改写不等于服务端权益，电池是否显示无限仍待设备验证。
+#!author=qinxi 原逻辑；Loon 适配
+#!homepage=https://github.com/shilianmalaxiangguo/loon-plugins
+#!loon_version=3.2.1(730)
+#!tag=Duolingo
+
+[Script]
+# 原请求只发送一次；$done({body: ...}) 替换原响应，无内部请求标记。
+# 固定提交地址既是版本锁定，也是与旧 main 地址不同的下载地址。
+http-response ^https://(?:[A-Za-z0-9-]+\.)+duolingo\.(?:com|cn)/[0-9]{4}-[0-9]{2}-[0-9]{2}/(?:batch|users/[0-9]+(?:/available-features)?)/?(?:\?|$) script-path=https://raw.githubusercontent.com/shilianmalaxiangguo/loon-plugins/0224ec5479fdd1d0407f4cb07c2be2c62ff81993/duolingo_super.js,requires-body=true,binary-body-mode=false,timeout=60,tag=Duolingo v8
+
+[MITM]
+hostname = *.duolingo.com, *.duolingo.cn
